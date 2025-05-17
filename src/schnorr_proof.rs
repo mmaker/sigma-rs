@@ -11,7 +11,7 @@ use crate::{
 
 use ff::{Field, PrimeField};
 use group::{Group, GroupEncoding};
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, RngCore};
 
 /// A Schnorr protocol proving knowledge some discrete logarithm relation.
 ///
@@ -34,7 +34,7 @@ where
     fn prover_commit(
         &self,
         witness: &Self::Witness,
-        mut rng: &mut (impl Rng + CryptoRng),
+        mut rng: &mut (impl RngCore + CryptoRng),
     ) -> (Self::Commitment, Self::ProverState) {
         let nonces: Vec<G::Scalar> = (0..self.0.morphism.num_scalars)
             .map(|_| G::Scalar::random(&mut rng))
