@@ -1,4 +1,4 @@
-use core::ops::{Add, Mul};
+use core::ops::{Add, Mul, Neg, Sub};
 
 use super::{GroupVar, LinearCombination, ScalarVar, Term};
 
@@ -51,6 +51,80 @@ impl Mul<GroupVar> for ScalarVar {
     type Output = Term;
 
     fn mul(self, rhs: GroupVar) -> Term {
-        rhs * self
+        Term {
+            scalar: self,
+            elem: rhs,
+        }
+    }
+}
+
+// GroupVar algebraic operations
+impl Add<GroupVar> for GroupVar {
+    type Output = LinearCombination;
+
+    fn add(self, rhs: GroupVar) -> LinearCombination {
+        LinearCombination::from(Term {
+            elem: self,
+            scalar: ScalarVar(0), // coefficient 1 (assumes scalar variable 0 represents 1)
+        }) + Term {
+            elem: rhs,
+            scalar: ScalarVar(0),
+        }
+    }
+}
+
+impl Sub<GroupVar> for GroupVar {
+    type Output = LinearCombination;
+
+    fn sub(self, rhs: GroupVar) -> LinearCombination {
+        LinearCombination::from(Term {
+            elem: self,
+            scalar: ScalarVar(0), // coefficient 1
+        }) + Term {
+            elem: rhs,
+            scalar: ScalarVar(1), // coefficient -1
+        }
+    }
+}
+
+// ScalarVar algebraic operations (assuming GroupVar(0) is the generator)
+impl Add<ScalarVar> for ScalarVar {
+    type Output = LinearCombination;
+
+    fn add(self, rhs: ScalarVar) -> LinearCombination {
+        // Represents (self + rhs) * G where G is the generator at GroupVar(0)
+        LinearCombination::from(Term {
+            elem: GroupVar(0), // generator
+            scalar: self,
+        }) + Term {
+            elem: GroupVar(0), // generator
+            scalar: rhs,
+        }
+    }
+}
+
+impl Sub<ScalarVar> for ScalarVar {
+    type Output = LinearCombination;
+
+    fn sub(self, rhs: ScalarVar) -> LinearCombination {
+        LinearCombination::from(Term {
+            elem: GroupVar(0), // generator
+            scalar: self,
+        }) + Term {
+            elem: GroupVar(0), // generator
+            scalar: rhs,
+        }
+    }
+}
+
+impl Neg for ScalarVar {
+    type Output = Term;
+
+    fn neg(self) -> Term {
+        // Represents -scalar * G where G is the generator at GroupVar(0)
+        Term {
+            elem: GroupVar(0), // generator
+            scalar: self,
+        }
     }
 }
