@@ -547,7 +547,7 @@ where
         context: &[u8],
     ) -> crate::fiat_shamir::NISigmaProtocol<
         crate::schnorr_protocol::SchnorrProof<G>,
-        crate::codec::ShakeCodec<G>,
+        crate::codec::KeccakByteSchnorrCodec<G>,
     >
     where
         G: group::GroupEncoding,
