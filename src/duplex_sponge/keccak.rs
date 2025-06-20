@@ -79,16 +79,12 @@ impl DuplexSpongeInterface for KeccakDuplexSponge {
     }
 
     fn squeeze(&mut self, mut length: usize) -> Vec<u8> {
-        if length == 0 {
-            return Vec::new();
-        }
-        self.absorb_index = 0;
-
         let mut output = Vec::new();
         while length != 0 {
             if self.squeeze_index == RATE {
                 self.state.permute();
                 self.squeeze_index = 0;
+                self.absorb_index = 0;
             }
 
             let chunk_size = usize::min(RATE - self.squeeze_index, length);
@@ -98,7 +94,6 @@ impl DuplexSpongeInterface for KeccakDuplexSponge {
             self.squeeze_index += chunk_size;
             length -= chunk_size;
         }
-
         output
     }
 }
