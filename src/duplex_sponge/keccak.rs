@@ -80,7 +80,7 @@ impl DuplexSpongeInterface for KeccakDuplexSponge {
 
     fn squeeze(&mut self, mut length: usize) -> Vec<u8> {
         if length == 0 {
-        return Vec::new(); 
+            return Vec::new();
         }
         self.absorb_index = RATE;
 
@@ -130,7 +130,7 @@ mod tests {
         assert_eq!(output, hex::decode("73e4a040a956f57693fb2b2dde8a8ea2c14d39ff8830060cd0301d6de25b2097ba858efedeeb89368eaf7c94a68f62835f932b5f0dd0ba376c48a0fdb5e21f0c").unwrap());
     }
     #[test]
-       fn test_absorb_empty_after_does_not_break() {
+    fn test_absorb_empty_after_does_not_break() {
         let mut sponge = KeccakDuplexSponge::new(*b"unit_tests_keccak_tag___________");
         sponge.absorb(b"Hello, World!");
         sponge.absorb(b"");
@@ -139,7 +139,7 @@ mod tests {
 
         assert_eq!(output, hex::decode("73e4a040a956f57693fb2b2dde8a8ea2c14d39ff8830060cd0301d6de25b2097ba858efedeeb89368eaf7c94a68f62835f932b5f0dd0ba376c48a0fdb5e21f0c").unwrap());
     }
-    
+
     #[test]
     fn test_squeeze_zero_behavior() {
         let mut sponge = KeccakDuplexSponge::new(*b"unit_tests_keccak_tag___________");
