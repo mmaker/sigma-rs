@@ -107,52 +107,35 @@ mod tests {
 
     #[test]
     fn test_keccak_duplex_sponge() {
-        let mut sponge = KeccakDuplexSponge::new([0u8; 32]);
+        let mut sponge = KeccakDuplexSponge::new(*b"unit_tests_keccak_tag___________");
 
         let input = b"Hello, World!";
         sponge.absorb(input);
         let output = sponge.squeeze(64);
 
-        assert_eq!(output, hex::decode("30b74a98221dd643d0814095c212d663a67945c6a582ef8f71bd2a14607ebade3f16e5975ad13d313d9aa0aa97ad29f7df5cff249fa633d3a7ac70d8587bec90").unwrap());
+        assert_eq!(output, hex::decode("73e4a040a956f57693fb2b2dde8a8ea2c14d39ff8830060cd0301d6de25b2097ba858efedeeb89368eaf7c94a68f62835f932b5f0dd0ba376c48a0fdb5e21f0c").unwrap());
     }
 
     #[test]
     fn test_absorb_empty_does_not_break() {
-        let tag = *b"empty-input-absorb-0000000000000";
-        let expected_state: [u8; 200] = [
-            114, 174, 112, 70, 48, 237, 142, 114, 185, 196, 146, 48, 52, 152, 77, 46, 9, 215, 55,
-            106, 22, 83, 9, 246, 35, 63, 240, 238, 163, 29, 213, 166, 50, 154, 138, 91, 235, 228,
-            43, 178, 118, 174, 195, 230, 177, 241, 148, 171, 191, 228, 254, 31, 23, 213, 171, 74,
-            241, 225, 247, 151, 125, 247, 17, 95, 89, 239, 66, 139, 73, 178, 220, 142, 126, 37,
-            193, 217, 6, 247, 21, 110, 110, 16, 36, 156, 225, 250, 218, 171, 181, 58, 232, 48, 189,
-            174, 247, 12, 97, 126, 18, 234, 223, 73, 210, 54, 185, 143, 66, 243, 147, 232, 99, 4,
-            211, 251, 49, 84, 174, 24, 245, 208, 123, 105, 159, 192, 75, 207, 106, 216, 70, 74,
-            234, 251, 112, 154, 149, 120, 212, 220, 116, 41, 177, 40, 246, 170, 243, 177, 244, 255,
-            81, 132, 37, 82, 213, 115, 99, 249, 129, 30, 204, 101, 218, 75, 154, 89, 44, 226, 213,
-            136, 227, 65, 111, 255, 118, 152, 224, 34, 135, 231, 251, 146, 195, 235, 228, 1, 197,
-            157, 10, 248, 138, 15, 217, 254, 6, 57, 60, 101, 10, 110, 211, 175,
-        ];
-        let mut sponge = KeccakDuplexSponge::new(tag);
-        sponge.state.permute();
-
-        let state0 = sponge.state.as_ref();
-        assert_eq!(state0.to_vec(), expected_state);
-
+        let mut sponge = KeccakDuplexSponge::new(*b"unit_tests_keccak_tag___________");
+        sponge.absorb(b"Hello, World!");
         sponge.absorb(b"");
+        sponge.squeeze(0);
+        let output = sponge.squeeze(64);
 
-        let state1 = sponge.state.as_ref();
-        assert_eq!(state1.to_vec(), expected_state);
+        assert_eq!(output, hex::decode("73e4a040a956f57693fb2b2dde8a8ea2c14d39ff8830060cd0301d6de25b2097ba858efedeeb89368eaf7c94a68f62835f932b5f0dd0ba376c48a0fdb5e21f0c").unwrap());
     }
 
     #[test]
     fn test_squeeze_zero_behavior() {
-        let mut sponge = KeccakDuplexSponge::new([0u8; 32]);
+        let mut sponge = KeccakDuplexSponge::new(*b"unit_tests_keccak_tag___________");
         sponge.absorb(b"Hello, World!");
 
         sponge.squeeze(0);
         let output = sponge.squeeze(64);
 
-        assert_eq!(output, hex::decode("30b74a98221dd643d0814095c212d663a67945c6a582ef8f71bd2a14607ebade3f16e5975ad13d313d9aa0aa97ad29f7df5cff249fa633d3a7ac70d8587bec90").unwrap());
+        assert_eq!(output, hex::decode("73e4a040a956f57693fb2b2dde8a8ea2c14d39ff8830060cd0301d6de25b2097ba858efedeeb89368eaf7c94a68f62835f932b5f0dd0ba376c48a0fdb5e21f0c").unwrap());
     }
 
     #[test]
