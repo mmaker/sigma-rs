@@ -150,9 +150,9 @@ mod tests {
         sponge.absorb(b"Hello, World!");
 
         sponge.squeeze(0);
-        let ouput = sponge.squeeze(64);
+        let output = sponge.squeeze(64);
 
-        assert_eq!(ouput, hex::decode("30b74a98221dd643d0814095c212d663a67945c6a582ef8f71bd2a14607ebade3f16e5975ad13d313d9aa0aa97ad29f7df5cff249fa633d3a7ac70d8587bec90").unwrap());
+        assert_eq!(output, hex::decode("30b74a98221dd643d0814095c212d663a67945c6a582ef8f71bd2a14607ebade3f16e5975ad13d313d9aa0aa97ad29f7df5cff249fa633d3a7ac70d8587bec90").unwrap());
     }
 
     #[test]
