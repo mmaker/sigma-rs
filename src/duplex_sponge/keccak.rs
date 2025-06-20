@@ -82,7 +82,7 @@ impl DuplexSpongeInterface for KeccakDuplexSponge {
         if length == 0 {
             return Vec::new();
         }
-        self.absorb_index = RATE;
+        self.absorb_index = 0;
 
         let mut output = Vec::new();
         while length != 0 {
@@ -172,7 +172,7 @@ mod tests {
 
         assert_eq!(
             output,
-            hex::decode("5b89db635853345429206e79f6ba536b83a429b4070443512c498419834cb78e")
+            hex::decode("20ce6da64ffc09df8de254222c068358da39d23ec43e522ceaaa1b82b90c8b9a")
                 .unwrap()
         );
     }
