@@ -163,10 +163,10 @@ mod tests {
         sponge.absorb(b"first");
         sponge.squeeze(32);
         sponge.absorb(b"second");
-        let out2 = sponge.squeeze(32);
+        let output = sponge.squeeze(32);
 
         assert_eq!(
-            out2,
+            output,
             hex::decode("5b89db635853345429206e79f6ba536b83a429b4070443512c498419834cb78e")
                 .unwrap()
         );
