@@ -118,12 +118,12 @@ where
 
         // Local verification of the proof
         if self
-        .interactive_proof
-        .verifier(&commitment, &challenge, &response)
-        .is_err()
-    {
-        return Err(Error::VerificationFailure);
-    }
+            .interactive_proof
+            .verifier(&commitment, &challenge, &response)
+            .is_err()
+        {
+            return Err(Error::VerificationFailure);
+        }
         Ok((commitment, challenge, response))
     }
 
@@ -227,7 +227,6 @@ where
     }
 }
 
-
 impl<P, C> NISigmaProtocol<P, C>
 where
     P: SigmaProtocol + SigmaProtocolSimulator,
@@ -288,7 +287,7 @@ where
         if proof.len() != total_expected_len {
             return Err(Error::VerificationFailure);
         }
-        
+
         // Compute the commitments
         let commitment = self
             .interactive_proof
