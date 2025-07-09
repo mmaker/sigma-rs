@@ -117,10 +117,13 @@ where
             .prover_response(prover_state, &challenge)?;
 
         // Local verification of the proof
-        debug_assert!(self
+        if self
             .interactive_proof
             .verifier(&commitment, &challenge, &response)
-            .is_ok());
+            .is_err()
+        {
+            return Err(Error::VerificationFailure);
+        }
         Ok((commitment, challenge, response))
     }
 
@@ -205,6 +208,13 @@ where
             .interactive_proof
             .deserialize_response(&proof[commitment_size..])?;
 
+        // Assert correct proof size
+        let total_expected_len =
+            commitment_size + self.interactive_proof.serialize_response(&response).len();
+        if proof.len() != total_expected_len {
+            return Err(Error::VerificationFailure);
+        }
+
         let mut hash_state = self.hash_state.clone();
 
         // Recompute the challenge
@@ -270,6 +280,13 @@ where
         let response = self
             .interactive_proof
             .deserialize_response(&proof[challenge_size..])?;
+
+        // Assert correct proof size
+        let total_expected_len =
+            challenge_size + self.interactive_proof.serialize_response(&response).len();
+        if proof.len() != total_expected_len {
+            return Err(Error::VerificationFailure);
+        }
 
         // Compute the commitments
         let commitment = self
