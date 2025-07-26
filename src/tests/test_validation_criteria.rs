@@ -163,7 +163,6 @@ mod instance_validation {
         let result = CanonicalLinearRelation::try_from(&linear_relation);
         assert!(result.is_err());
 
-
         // The following relation is for
         // X = B * x + B * pub_scalar + A * 3
         // and should be considered a valid instance.
@@ -172,7 +171,8 @@ mod instance_validation {
         let x_var = linear_relation.allocate_scalar();
         let B_var = linear_relation.allocate_element();
         let A_var = linear_relation.allocate_element();
-        let X_var = linear_relation.allocate_eq(B_var * x_var + B_var * pub_scalar + A_var * Scalar::from(3));
+        let X_var = linear_relation
+            .allocate_eq(B_var * x_var + B_var * pub_scalar + A_var * Scalar::from(3));
 
         linear_relation.set_element(B_var, B);
         linear_relation.set_element(A_var, A);
@@ -421,7 +421,10 @@ mod proof_validation {
         match proof_result {
             Ok(proof) => {
                 let verify_result = nizk.verify_batchable(&proof);
-                println!("Bug reproduced: Proof with wrong branch verified: {:?}", verify_result.is_ok());
+                println!(
+                    "Bug reproduced: Proof with wrong branch verified: {:?}",
+                    verify_result.is_ok()
+                );
                 assert!(
                     verify_result.is_err(),
                     "BUG: Proof should fail when using wrong branch in OR relation, but it passed!"

@@ -1,11 +1,10 @@
-
 use ff::{Field, PrimeField};
 use group::prime::PrimeGroup;
 use rand::rngs::OsRng;
 use rand::RngCore;
 
-use crate::fiat_shamir::Nizk;
 use crate::codec::Shake128DuplexSponge;
+use crate::fiat_shamir::Nizk;
 use crate::linear_relation::CanonicalLinearRelation;
 use crate::schnorr_protocol::SchnorrProof;
 
@@ -152,7 +151,10 @@ pub fn twisted_pedersen_commitment<G: PrimeGroup, R: RngCore>(
     let [var_x, var_r] = relation.allocate_scalars();
     let [var_G, var_H] = relation.allocate_elements();
 
-    relation.allocate_eq((var_x * G::Scalar::from(3)) * var_G + (var_r * G::Scalar::from(2) + G::Scalar::from(3)) * var_H);
+    relation.allocate_eq(
+        (var_x * G::Scalar::from(3)) * var_G
+            + (var_r * G::Scalar::from(2) + G::Scalar::from(3)) * var_H,
+    );
 
     relation.set_elements([(var_H, H), (var_G, G::generator())]);
     relation.compute_image(&[x, r]).unwrap();
@@ -198,7 +200,6 @@ pub fn pedersen_commitment_dleq<G: PrimeGroup, R: RngCore>(
     let instance = (&relation).try_into().unwrap();
     (instance, witness_vec)
 }
-
 
 /// LinearMap for knowledge of an opening for use in a BBS commitment.
 // BBS message length is 3
@@ -267,8 +268,7 @@ pub fn weird_linear_combination<G: PrimeGroup, R: RngCore>(
     let A = sigma__lr.allocate_element();
     let var_B = sigma__lr.allocate_element();
 
-    let sigma__eq1 =
-        sigma__lr.allocate_eq(A * G::Scalar::from(1) + gen__disj1_x_r_var * var_B);
+    let sigma__eq1 = sigma__lr.allocate_eq(A * G::Scalar::from(1) + gen__disj1_x_r_var * var_B);
 
     // Set the group elements
     sigma__lr.set_elements([(A, G::generator()), (var_B, B)]);
@@ -357,16 +357,14 @@ fn cmz_wallet_spend_relation<G: PrimeGroup, R: RngCore>(
     // C_show_Hattr_W_balance = (N.balance + I.price + fee) * P_W + z_w_balance * A
     // This is the problematic expression that fails in cmz
     let var_C = relation.allocate_eq(
-        (var_n_balance + var_i_price + G::Scalar::from(5u64)) * var_P_W + var_z_w_balance * var_A
+        (var_n_balance + var_i_price + G::Scalar::from(5u64)) * var_P_W + var_z_w_balance * var_A,
     );
 
-    relation.set_elements([
-        (var_P_W, P_W),
-        (var_P_I, P_I),
-        (var_A, A),
-    ]);
+    relation.set_elements([(var_P_W, P_W), (var_P_I, P_I), (var_A, A)]);
 
-    relation.compute_image(&[n_balance, i_price, z_w_balance]).unwrap();
+    relation
+        .compute_image(&[n_balance, i_price, z_w_balance])
+        .unwrap();
 
     let C = relation.linear_map.group_elements.get(var_C).unwrap();
     let expected = P_W * w_balance + A * z_w_balance;
@@ -392,13 +390,25 @@ fn test_relations() {
         ("dleq", Box::new(dleq)),
         ("shifted_dleq", Box::new(shifted_dleq)),
         ("pedersen_commitment", Box::new(pedersen_commitment)),
-        ("twisted_pedersen_commitment", Box::new(twisted_pedersen_commitment)),
-        ("pedersen_commitment_dleq", Box::new(pedersen_commitment_dleq)),
+        (
+            "twisted_pedersen_commitment",
+            Box::new(twisted_pedersen_commitment),
+        ),
+        (
+            "pedersen_commitment_dleq",
+            Box::new(pedersen_commitment_dleq),
+        ),
         ("bbs_blind_commitment", Box::new(bbs_blind_commitment)),
-        ("weird_linear_combination", Box::new(weird_linear_combination)),
+        (
+            "weird_linear_combination",
+            Box::new(weird_linear_combination),
+        ),
         ("simple_subtractions", Box::new(simple_subtractions)),
         ("subtractions_with_shift", Box::new(subtractions_with_shift)),
-        ("cmz_wallet_spend_relation", Box::new(cmz_wallet_spend_relation)),
+        (
+            "cmz_wallet_spend_relation",
+            Box::new(cmz_wallet_spend_relation),
+        ),
     ];
 
     for (relation_name, relation_sampler) in instance_generators.iter() {
