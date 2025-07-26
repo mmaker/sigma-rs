@@ -1,16 +1,13 @@
-use std::collections::HashMap;
 
-use ff::Field;
+use ff::{Field, PrimeField};
 use group::prime::PrimeGroup;
 use rand::rngs::OsRng;
 use rand::RngCore;
 
 use crate::fiat_shamir::Nizk;
-use crate::{
-    codec::Shake128DuplexSponge, linear_relation::CanonicalLinearRelation,
-    schnorr_protocol::SchnorrProof,
-};
-use ff::PrimeField;
+use crate::codec::Shake128DuplexSponge;
+use crate::linear_relation::CanonicalLinearRelation;
+use crate::schnorr_protocol::SchnorrProof;
 
 use crate::linear_relation::{msm_pr, LinearRelation};
 
@@ -327,34 +324,82 @@ fn subtractions_with_shift<G: PrimeGroup, R: RngCore>(
     (instance, witness)
 }
 
+/// LinearMap for the failing relation from cmz wallet test: W.balance = N.balance + I.price + fee
+#[allow(non_snake_case)]
+fn cmz_wallet_spend_relation<G: PrimeGroup, R: RngCore>(
+    mut rng: &mut R,
+) -> (CanonicalLinearRelation<G>, Vec<G::Scalar>) {
+    // Simulate the wallet spend relation from cmz
+    let P_W = G::random(&mut rng);
+    let P_I = G::random(&mut rng);
+    let A = G::random(&mut rng);
+
+    // Secret values
+    let n_balance = G::Scalar::random(&mut rng);
+    let i_price = G::Scalar::random(&mut rng);
+    let fee = G::Scalar::from(5u64);
+    let z_w_balance = G::Scalar::random(&mut rng);
+
+    // W.balance = N.balance + I.price + fee
+    let w_balance = n_balance + i_price + fee;
+
+    let mut relation = LinearRelation::new();
+
+    // Allocate variables
+    let var_n_balance = relation.allocate_scalar();
+    let var_i_price = relation.allocate_scalar();
+    let var_z_w_balance = relation.allocate_scalar();
+
+    let var_P_W = relation.allocate_element();
+    let var_P_I = relation.allocate_element();
+    let var_A = relation.allocate_element();
+
+    // C_show_Hattr_W_balance = (N.balance + I.price + fee) * P_W + z_w_balance * A
+    // This is the problematic expression that fails in cmz
+    let var_C = relation.allocate_eq(
+        (var_n_balance + var_i_price + G::Scalar::from(5u64)) * var_P_W + var_z_w_balance * var_A
+    );
+
+    relation.set_elements([
+        (var_P_W, P_W),
+        (var_P_I, P_I),
+        (var_A, A),
+    ]);
+
+    relation.compute_image(&[n_balance, i_price, z_w_balance]).unwrap();
+
+    let C = relation.linear_map.group_elements.get(var_C).unwrap();
+    let expected = P_W * w_balance + A * z_w_balance;
+    assert_eq!(C, expected);
+
+    let witness = vec![n_balance, i_price, z_w_balance];
+    let instance = (&relation).try_into().unwrap();
+    (instance, witness)
+}
+
 /// Generic helper function to test both relation correctness and NIZK functionality
 #[test]
-fn test_common_relations() {
+fn test_relations() {
     use group::Group;
     type G = bls12_381::G1Projective;
 
-    let mut instance_generators = HashMap::<
+    let instance_generators: Vec<(
         &str,
         Box<dyn Fn(&mut OsRng) -> (CanonicalLinearRelation<G>, Vec<<G as Group>::Scalar>)>,
-    >::new();
-
-    instance_generators.insert("dlog", Box::new(discrete_logarithm));
-    instance_generators.insert("shifted_dlog", Box::new(shifted_dlog));
-    instance_generators.insert("dleq", Box::new(dleq));
-    instance_generators.insert("shifted_dleq", Box::new(shifted_dleq));
-    instance_generators.insert("pedersen_commitment", Box::new(pedersen_commitment));
-    instance_generators.insert("twisted_pedersen_commitment", Box::new(twisted_pedersen_commitment));
-    instance_generators.insert(
-        "pedersen_commitment_dleq",
-        Box::new(pedersen_commitment_dleq),
-    );
-    instance_generators.insert("bbs_blind_commitment", Box::new(bbs_blind_commitment));
-    instance_generators.insert(
-        "weird_linear_combination",
-        Box::new(weird_linear_combination),
-    );
-    instance_generators.insert("simple_subtractions", Box::new(simple_subtractions));
-    instance_generators.insert("subtractions_with_shift", Box::new(subtractions_with_shift));
+    )> = vec![
+        ("dlog", Box::new(discrete_logarithm)),
+        ("shifted_dlog", Box::new(shifted_dlog)),
+        ("dleq", Box::new(dleq)),
+        ("shifted_dleq", Box::new(shifted_dleq)),
+        ("pedersen_commitment", Box::new(pedersen_commitment)),
+        ("twisted_pedersen_commitment", Box::new(twisted_pedersen_commitment)),
+        ("pedersen_commitment_dleq", Box::new(pedersen_commitment_dleq)),
+        ("bbs_blind_commitment", Box::new(bbs_blind_commitment)),
+        ("weird_linear_combination", Box::new(weird_linear_combination)),
+        ("simple_subtractions", Box::new(simple_subtractions)),
+        ("subtractions_with_shift", Box::new(subtractions_with_shift)),
+        ("cmz_wallet_spend_relation", Box::new(cmz_wallet_spend_relation)),
+    ];
 
     for (relation_name, relation_sampler) in instance_generators.iter() {
         let mut rng = OsRng;
