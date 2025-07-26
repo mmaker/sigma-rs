@@ -351,6 +351,8 @@ pub struct CanonicalLinearRelation<G: PrimeGroup> {
     pub num_scalars: usize,
 }
 
+type WeightedCache<A, B> = HashMap<B, Vec<(A, B)>>;
+
 impl<G: PrimeGroup> CanonicalLinearRelation<G> {
     /// Create a new empty canonical linear relation
     pub fn new() -> Self {
@@ -368,7 +370,7 @@ impl<G: PrimeGroup> CanonicalLinearRelation<G> {
         group_var: GroupVar<G>,
         weight: &G::Scalar,
         original_group_elements: &GroupMap<G>,
-        weighted_group_cache: &mut HashMap<GroupVar<G>, Vec<(G::Scalar, GroupVar<G>)>>,
+        weighted_group_cache: &mut WeightedCache<G::Scalar, GroupVar<G>>,
     ) -> Result<GroupVar<G>, Error> {
         // Check if we already have this (weight, group_var) combination
         let entry = weighted_group_cache.entry(group_var).or_default();
@@ -397,7 +399,7 @@ impl<G: PrimeGroup> CanonicalLinearRelation<G> {
         image_var: GroupVar<G>,
         equation: &LinearCombination<G>,
         original_relation: &LinearRelation<G>,
-        weighted_group_cache: &mut HashMap<GroupVar<G>, Vec<(G::Scalar, GroupVar<G>)>>,
+        weighted_group_cache: &mut WeightedCache<G::Scalar, GroupVar<G>>,
     ) -> Result<(), Error> {
         let mut rhs_terms = Vec::new();
 
@@ -626,8 +628,7 @@ impl<G: PrimeGroup> CanonicalLinearRelation<G> {
 
             let elem = Option::<G>::from(G::from_bytes(&repr)).ok_or_else(|| {
                 Error::from(InvalidInstance::new(format!(
-                    "Invalid group element at index {}",
-                    i
+                    "Invalid group element at index {i}"
                 )))
             })?;
 
@@ -698,16 +699,12 @@ impl<G: PrimeGroup> TryFrom<&LinearRelation<G>> for CanonicalLinearRelation<G> {
         }
 
         // If any linear combination has no witness variables, the relation is invalid
-        if relation
-            .linear_map
-            .linear_combinations
-            .iter()
-            .any(|lc| lc.0.iter().all(|weighted| matches!(weighted.term.scalar, ScalarTerm::Unit)))
-        {
+        if relation.linear_map.linear_combinations.iter().any(|lc| {
+            lc.0.iter()
+                .all(|weighted| matches!(weighted.term.scalar, ScalarTerm::Unit))
+        }) {
             return Err(Error::InvalidInstanceWitnessPair);
         }
-
-
 
         let mut canonical = CanonicalLinearRelation::new();
         canonical.num_scalars = relation.linear_map.num_scalars;

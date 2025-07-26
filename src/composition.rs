@@ -82,7 +82,7 @@ pub enum ComposedProverState<G: PrimeGroup> {
     And(Vec<ComposedProverState<G>>),
     Or(
         usize,                                                 // real index
-        Vec<ComposedProverState<G>>,                           // real ProverState
+        Box<ComposedProverState<G>>,                           // real ProverState
         (Vec<ComposedChallenge<G>>, Vec<ComposedResponse<G>>), // simulated transcripts
     ),
 }
@@ -99,7 +99,19 @@ pub enum ComposedResponse<G: PrimeGroup> {
 pub enum ComposedWitness<G: PrimeGroup> {
     Simple(<SchnorrProof<G> as SigmaProtocol>::Witness),
     And(Vec<ComposedWitness<G>>),
-    Or(usize, Vec<ComposedWitness<G>>),
+    Or(usize, Box<ComposedWitness<G>>),
+}
+
+impl<G: PrimeGroup> From<Vec<ComposedWitness<G>>> for ComposedWitness<G> {
+    fn from(value: Vec<ComposedWitness<G>>) -> Self {
+        Self::And(value)
+    }
+}
+
+impl<G: PrimeGroup> From<(usize, ComposedWitness<G>)> for ComposedWitness<G> {
+    fn from((i, witness): (usize, ComposedWitness<G>)) -> Self {
+        Self::Or(i, Box::new(witness))
+    }
 }
 
 // Structure representing the Challenge type of Protocol as SigmaProtocol
@@ -149,7 +161,7 @@ impl<G: PrimeGroup> SigmaProtocol for ComposedRelation<G> {
                 let mut simulated_challenges = Vec::new();
                 let mut simulated_responses = Vec::new();
 
-                let (real_commitment, real_state) = ps[*w_index].prover_commit(&w[0], rng)?;
+                let (real_commitment, real_state) = ps[*w_index].prover_commit(w, rng)?;
 
                 for i in (0..ps.len()).filter(|i| i != w_index) {
                     let (commitment, challenge, response) = ps[i].simulate_transcript(rng)?;
@@ -163,7 +175,7 @@ impl<G: PrimeGroup> SigmaProtocol for ComposedRelation<G> {
                     ComposedCommitment::Or(commitments),
                     ComposedProverState::Or(
                         *w_index,
-                        vec![real_state],
+                        Box::new(real_state),
                         (simulated_challenges, simulated_responses),
                     ),
                 ))
@@ -208,8 +220,7 @@ impl<G: PrimeGroup> SigmaProtocol for ComposedRelation<G> {
                 for ch in &simulated_challenges {
                     real_challenge -= ch;
                 }
-                let real_response =
-                    ps[w_index].prover_response(real_state[0].clone(), &real_challenge)?;
+                let real_response = ps[w_index].prover_response(*real_state, &real_challenge)?;
 
                 for (i, _) in ps.iter().enumerate() {
                     if i == w_index {
