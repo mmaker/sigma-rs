@@ -44,6 +44,28 @@ impl<G: PrimeGroup> CanonicalLinearRelation<G> {
         }
     }
 
+    /// Evaluate the linear map with the provided scalars,
+    ///
+    /// This returns a list of image points produced by evaluating each linear combination in the
+    /// relation. The order of the returned list matches the order of [`Self::linear_combinations`].
+    pub fn evaluate(&self, scalars: &[G::Scalar]) -> Result<Vec<G>, Error> {
+        if scalars.len() != self.num_scalars {
+            return Err(Error::InvalidInstanceWitnessPair);
+        }
+        self.linear_combinations
+            .iter()
+            .map(|constraint| {
+                let mut result = G::identity();
+                for (scalar_var, group_var) in constraint {
+                    let scalar_val = scalars[scalar_var.index()];
+                    let group_val = self.group_elements.get(*group_var)?;
+                    result += group_val * scalar_val;
+                }
+                Ok(result)
+            })
+            .collect()
+    }
+
     /// Get or create a GroupVar for a weighted group element, with deduplication
     fn get_or_create_weighted_group_var(
         &mut self,
