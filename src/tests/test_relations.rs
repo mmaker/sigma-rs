@@ -1,14 +1,12 @@
-use ff::{Field, PrimeField};
+use ff::Field;
 use group::prime::PrimeGroup;
-use rand::rngs::OsRng;
 use rand::RngCore;
 
 use crate::codec::Shake128DuplexSponge;
 use crate::fiat_shamir::Nizk;
-use crate::linear_relation::CanonicalLinearRelation;
-use crate::schnorr_protocol::SchnorrProof;
+use crate::linear_relation::{CanonicalLinearRelation, LinearRelation, Sum};
 
-use crate::linear_relation::{msm_pr, LinearRelation};
+use crate::group::msm::VariableMultiScalarMul;
 
 /// LinearMap for knowledge of a discrete logarithm relative to a fixed basepoint.
 #[allow(non_snake_case)]
@@ -178,8 +176,8 @@ pub fn pedersen_commitment_dleq<G: PrimeGroup, R: RngCore>(
     let witness = [G::Scalar::random(&mut *rng), G::Scalar::random(&mut *rng)];
     let mut relation = LinearRelation::new();
 
-    let X = msm_pr::<G>(&witness, &[generators[0], generators[1]]);
-    let Y = msm_pr::<G>(&witness, &[generators[2], generators[3]]);
+    let X = G::msm(&witness, &[generators[0], generators[1]]);
+    let Y = G::msm(&witness, &[generators[2], generators[3]]);
 
     let [var_x, var_r] = relation.allocate_scalars();
 
@@ -199,6 +197,87 @@ pub fn pedersen_commitment_dleq<G: PrimeGroup, R: RngCore>(
     let witness_vec = witness.to_vec();
     let instance = (&relation).try_into().unwrap();
     (instance, witness_vec)
+}
+
+/// Test that a Pedersen commitment is between 0 and 1337.
+#[allow(non_snake_case)]
+pub fn test_range<G: PrimeGroup, R: RngCore>(
+    mut rng: &mut R,
+) -> (CanonicalLinearRelation<G>, Vec<G::Scalar>) {
+    let G = G::generator();
+    let H = G::random(&mut rng);
+
+    let bases = [1, 2, 4, 8, 16, 32, 64, 128, 256, 313, 512].map(G::Scalar::from);
+    const BITS: usize = 11;
+
+    let mut instance = LinearRelation::new();
+    let [var_G, var_H] = instance.allocate_elements();
+    let [var_x, var_r] = instance.allocate_scalars();
+    let vars_b = instance.allocate_scalars::<BITS>();
+    let vars_s = instance.allocate_scalars::<BITS>();
+    let var_s2 = instance.allocate_scalars::<BITS>();
+    let var_Ds = instance.allocate_elements::<BITS>();
+
+    // `var_Ds[i]` are bit commitments.
+    for i in 0..BITS {
+        instance.append_equation(var_Ds[i], vars_b[i] * var_G + vars_s[i] * var_H);
+        instance.append_equation(var_Ds[i], vars_b[i] * var_Ds[i] + var_s2[i] * var_H);
+    }
+    // `var_C` is a Pedersen commitment to `var_x`.
+    let var_C = instance.allocate_eq(var_x * var_G + var_r * var_H);
+    // `var_x` = sum(bases[i] * var_b[i])
+    // This equation is "trivial", in that it does not contain any scalar var.
+    // Our linear relation is smart enough to check this outside of the proof,
+    // which is what a normal implementation would do.
+    instance.append_equation(
+        var_C,
+        (0..BITS)
+            .map(|i| var_Ds[i] *  bases[i])
+            .sum::<Sum<_>>(),
+    );
+
+    let r = G::Scalar::random(&mut rng);
+    let x = G::Scalar::from(822);
+
+    let b = [
+        G::Scalar::ZERO,
+        G::Scalar::ONE,
+        G::Scalar::ONE,
+        G::Scalar::ZERO,
+        G::Scalar::ONE,
+        G::Scalar::ONE,
+        G::Scalar::ZERO,
+        G::Scalar::ZERO,
+        G::Scalar::ONE,
+        G::Scalar::ZERO,
+        G::Scalar::ONE,
+    ];
+    // set the randomness for the bit decomposition
+    let mut s = (0..BITS)
+        .map(|_| G::Scalar::random(&mut rng))
+        .collect::<Vec<_>>();
+    let partial_sum = (1..BITS)
+        .map(|i| bases[i] * s[i])
+        .sum::<G::Scalar>();
+    s[0] = r - partial_sum;
+    let s2 = (0..BITS)
+        .map(|i| (G::Scalar::ONE - b[i]) * s[i])
+        .collect::<Vec<_>>();
+    let witness = [x, r]
+        .iter()
+        .chain(&b)
+        .chain(&s)
+        .chain(&s2)
+        .copied()
+        .collect::<Vec<_>>();
+
+    instance.set_elements([(var_G, G), (var_H, H)]);
+    instance.set_element(var_C, G * x + H * r);
+    for i in 0..BITS {
+        instance.set_element(var_Ds[i], G * b[i] + H * s[i]);
+    }
+
+    (instance.canonical().unwrap(), witness)
 }
 
 /// LinearMap for knowledge of an opening for use in a BBS commitment.
@@ -256,7 +335,6 @@ pub fn bbs_blind_commitment<G: PrimeGroup, R: RngCore>(
 }
 
 /// LinearMap for the user's specific relation: A * 1 + gen__disj1_x_r * B
-#[allow(non_snake_case)]
 pub fn weird_linear_combination<G: PrimeGroup, R: RngCore>(
     rng: &mut R,
 ) -> (CanonicalLinearRelation<G>, Vec<G::Scalar>) {
@@ -290,12 +368,12 @@ fn simple_subtractions<G: PrimeGroup, R: RngCore>(
 ) -> (CanonicalLinearRelation<G>, Vec<G::Scalar>) {
     let x = G::Scalar::random(&mut rng);
     let B = G::random(&mut rng);
-    let X = B * (x - G::Scalar::from_u128(1u128));
+    let X = B * (x - G::Scalar::from(1));
 
     let mut linear_relation = LinearRelation::<G>::new();
     let var_x = linear_relation.allocate_scalar();
     let var_B = linear_relation.allocate_element();
-    let var_X = linear_relation.allocate_eq((var_x + (-G::Scalar::from_u128(1u128))) * var_B);
+    let var_X = linear_relation.allocate_eq((var_x + (-G::Scalar::from(1))) * var_B);
     linear_relation.set_element(var_B, B);
     linear_relation.set_element(var_X, X);
 
@@ -305,17 +383,16 @@ fn simple_subtractions<G: PrimeGroup, R: RngCore>(
 }
 
 fn subtractions_with_shift<G: PrimeGroup, R: RngCore>(
-    mut rng: &mut R,
+    rng: &mut R,
 ) -> (CanonicalLinearRelation<G>, Vec<G::Scalar>) {
     let B = G::generator();
-    let x = G::Scalar::random(&mut rng);
+    let x = G::Scalar::random(rng);
     let X = B * (x - G::Scalar::from(2));
 
     let mut linear_relation = LinearRelation::<G>::new();
     let var_x = linear_relation.allocate_scalar();
     let var_B = linear_relation.allocate_element();
-    let var_X =
-        linear_relation.allocate_eq((var_x + (-G::Scalar::from_u128(1u128))) * var_B + (-var_B));
+    let var_X = linear_relation.allocate_eq((var_x + (-G::Scalar::from(1))) * var_B + (-var_B));
 
     linear_relation.set_element(var_B, B);
     linear_relation.set_element(var_X, X);
@@ -370,7 +447,6 @@ fn cmz_wallet_spend_relation<G: PrimeGroup, R: RngCore>(
     (instance, witness)
 }
 
-
 fn nested_affine_relation<G: PrimeGroup, R: RngCore>(
     mut rng: &mut R,
 ) -> (CanonicalLinearRelation<G>, Vec<G::Scalar>) {
@@ -395,13 +471,12 @@ fn nested_affine_relation<G: PrimeGroup, R: RngCore>(
     (instance, witness)
 }
 
-
 #[test]
 fn test_cmz_wallet_with_fee() {
     use group::Group;
     type G = bls12_381::G1Projective;
 
-    let mut rng = OsRng;
+    let mut rng = rand::thread_rng();
 
     // This version should fail with InvalidInstanceWitnessPair
     // because it uses a scalar constant directly in the equation
@@ -435,7 +510,7 @@ fn test_cmz_wallet_with_fee() {
 
     // Try to convert to CanonicalLinearRelation - this should fail
     let nizk = relation.into_nizk(b"session_identifier").unwrap();
-    let result = nizk.prove_batchable(&vec![n_balance, i_price, z_w_balance], &mut OsRng);
+    let result = nizk.prove_batchable(&vec![n_balance, i_price, z_w_balance], &mut rng);
     assert!(result.is_ok());
     let proof = result.unwrap();
     let verify_result = nizk.verify_batchable(&proof);
@@ -445,71 +520,54 @@ fn test_cmz_wallet_with_fee() {
 /// Generic helper function to test both relation correctness and NIZK functionality
 #[test]
 fn test_relations() {
-    use group::Group;
     type G = bls12_381::G1Projective;
 
-    let instance_generators: Vec<(
-        &str,
-        Box<dyn Fn(&mut OsRng) -> (CanonicalLinearRelation<G>, Vec<<G as Group>::Scalar>)>,
-    )> = vec![
-        ("dlog", Box::new(discrete_logarithm)),
-        ("shifted_dlog", Box::new(shifted_dlog)),
-        ("dleq", Box::new(dleq)),
-        ("shifted_dleq", Box::new(shifted_dleq)),
-        ("pedersen_commitment", Box::new(pedersen_commitment)),
-        (
-            "twisted_pedersen_commitment",
-            Box::new(twisted_pedersen_commitment),
-        ),
-        (
-            "pedersen_commitment_dleq",
-            Box::new(pedersen_commitment_dleq),
-        ),
-        ("bbs_blind_commitment", Box::new(bbs_blind_commitment)),
-        (
-            "weird_linear_combination",
-            Box::new(weird_linear_combination),
-        ),
-        ("simple_subtractions", Box::new(simple_subtractions)),
-        ("subtractions_with_shift", Box::new(subtractions_with_shift)),
-        (
-            "cmz_wallet_spend_relation",
-            Box::new(cmz_wallet_spend_relation),
-        ),
-        ("nested_affine_relation", Box::new(nested_affine_relation)),
+    let instance_generators: Vec<(_, &'static dyn Fn(&mut _) -> _)> = vec![
+        ("dlog", &discrete_logarithm),
+        ("shifted_dlog", &shifted_dlog),
+        ("dleq", &dleq),
+        ("shifted_dleq", &shifted_dleq),
+        ("pedersen_commitment", &pedersen_commitment),
+        ("twisted_pedersen_commitment", &twisted_pedersen_commitment),
+        ("pedersen_commitment_dleq", &pedersen_commitment_dleq),
+        ("bbs_blind_commitment", &bbs_blind_commitment),
+        ("test_range", &test_range),
+        ("weird_linear_combination", &weird_linear_combination),
+        ("simple_subtractions", &simple_subtractions),
+        ("subtractions_with_shift", &subtractions_with_shift),
+        ("cmz_wallet_spend_relation", &cmz_wallet_spend_relation),
+        ("nested_affine_relation", &nested_affine_relation),
     ];
 
     for (relation_name, relation_sampler) in instance_generators.iter() {
-        let mut rng = OsRng;
+        let mut rng = rand::thread_rng();
         let (canonical_relation, witness) = relation_sampler(&mut rng);
 
         // Test the NIZK protocol
-        let protocol = SchnorrProof(canonical_relation);
-        let domain_sep = format!("test-fiat-shamir-{}", relation_name)
+        let domain_sep = format!("test-fiat-shamir-{relation_name}")
             .as_bytes()
             .to_vec();
-        let nizk = Nizk::<SchnorrProof<G>, Shake128DuplexSponge<G>>::new(&domain_sep, protocol);
+        let nizk = Nizk::<CanonicalLinearRelation<G>, Shake128DuplexSponge<G>>::new(
+            &domain_sep,
+            canonical_relation,
+        );
 
         // Test both proof types
-        let proof_batchable = nizk.prove_batchable(&witness, &mut OsRng).expect(&format!(
-            "Failed to create batchable proof for {}",
-            relation_name
-        ));
-        let proof_compact = nizk.prove_compact(&witness, &mut OsRng).expect(&format!(
-            "Failed to create compact proof for {}",
-            relation_name
-        ));
+        let proof_batchable = nizk
+            .prove_batchable(&witness, &mut rng)
+            .unwrap_or_else(|_| panic!("Failed to create batchable proof for {relation_name}"));
+        let proof_compact = nizk
+            .prove_compact(&witness, &mut rng)
+            .unwrap_or_else(|_| panic!("Failed to create compact proof for {relation_name}"));
 
         // Verify both proof types
         assert!(
             nizk.verify_batchable(&proof_batchable).is_ok(),
-            "Batchable proof verification failed for {}",
-            relation_name
+            "Batchable proof verification failed for {relation_name}"
         );
         assert!(
             nizk.verify_compact(&proof_compact).is_ok(),
-            "Compact proof verification failed for {}",
-            relation_name
+            "Compact proof verification failed for {relation_name}"
         );
     }
 }

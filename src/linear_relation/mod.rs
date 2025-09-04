@@ -8,22 +8,21 @@
 //! - [`LinearMap`]: a collection of linear combinations acting on group elements.
 //! - [`LinearRelation`]: a higher-level structure managing linear maps and their associated images.
 
-use std::marker::PhantomData;
-use std::iter;
+use core::iter;
+use core::marker::PhantomData;
 
 use ff::Field;
 use group::prime::PrimeGroup;
 
 use crate::codec::Shake128DuplexSponge;
 use crate::errors::{Error, InvalidInstance};
-use crate::schnorr_protocol::SchnorrProof;
+use crate::group::msm::VariableMultiScalarMul;
 use crate::Nizk;
 
 /// Implementations of conversion operations such as From and FromIterator for var and term types.
 mod convert;
 /// Implementations of core ops for the linear combination types.
 mod ops;
-
 
 /// Implementation of canonical linear relation.
 mod canonical;
@@ -41,8 +40,8 @@ impl<G> ScalarVar<G> {
     }
 }
 
-impl<G> std::hash::Hash for ScalarVar<G> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl<G> core::hash::Hash for ScalarVar<G> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.0.hash(state)
     }
 }
@@ -59,8 +58,8 @@ impl<G> GroupVar<G> {
     }
 }
 
-impl<G> std::hash::Hash for GroupVar<G> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl<G> core::hash::Hash for GroupVar<G> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.0.hash(state)
     }
 }
@@ -105,6 +104,16 @@ impl<T> Sum<T> {
     }
 }
 
+impl<T> core::iter::Sum<T> for Sum<T> {
+    /// Add a bunch of `T` to yield a `Sum<T>`
+    fn sum<I>(iter: I) -> Self
+    where
+        I: Iterator<Item = T>,
+    {
+        Self(iter.collect())
+    }
+}
+
 /// Represents a sparse linear combination of scalars and group elements.
 ///
 /// For example, it can represent an equation like:
@@ -116,6 +125,28 @@ impl<T> Sum<T> {
 ///
 /// The indices refer to external lists managed by the containing LinearMap.
 pub type LinearCombination<G> = Sum<Weighted<Term<G>, <G as group::Group>::Scalar>>;
+
+impl<G: PrimeGroup> LinearMap<G> {
+    fn map(&self, scalars: &[G::Scalar]) -> Result<Vec<G>, InvalidInstance> {
+        self.linear_combinations
+            .iter()
+            .map(|lc| {
+                let weighted_coefficients =
+                    lc.0.iter()
+                        .map(|weighted| weighted.term.scalar.value(scalars) * weighted.weight)
+                        .collect::<Vec<_>>();
+                let elements =
+                    lc.0.iter()
+                        .map(|weighted| self.group_elements.get(weighted.term.elem))
+                        .collect::<Result<Vec<_>, InvalidInstance>>();
+                match elements {
+                    Ok(elements) => Ok(G::msm(&weighted_coefficients, &elements)),
+                    Err(error) => Err(error),
+                }
+            })
+            .collect::<Result<Vec<_>, InvalidInstance>>()
+    }
+}
 
 /// Ordered mapping of [GroupVar] to group elements assignments.
 #[derive(Clone, Debug)]
@@ -161,12 +192,14 @@ impl<G: PrimeGroup> GroupMap<G> {
 
     /// Get the element value assigned to the given point var.
     ///
-    /// Returns [`Error::UnassignedGroupVar`] if a value is not assigned.
+    /// Returns [`InvalidInstance`] if a value is not assigned.
     pub fn get(&self, var: GroupVar<G>) -> Result<G, InvalidInstance> {
         match self.0.get(var.0) {
             Some(Some(elem)) => Ok(*elem),
-            Some(None) => Err(InvalidInstance::new("unassigned group variable")),
-            None => Err(InvalidInstance::new("unassigned group variable")),
+            Some(None) | None => Err(InvalidInstance::new(format!(
+                "unassigned group variable {}",
+                var.0
+            ))),
         }
     }
 
@@ -240,25 +273,6 @@ pub struct LinearMap<G: PrimeGroup> {
     pub num_elements: usize,
 }
 
-/// Perform a simple multi-scalar multiplication (MSM) over scalars and points.
-///
-/// Given slices of scalars and corresponding group elements (bases),
-/// returns the sum of each base multiplied by its scalar coefficient.
-///
-/// # Parameters
-/// - `scalars`: slice of scalar multipliers.
-/// - `bases`: slice of group elements to be multiplied by the scalars.
-///
-/// # Returns
-/// The group element result of the MSM.
-pub fn msm_pr<G: PrimeGroup>(scalars: &[G::Scalar], bases: &[G]) -> G {
-    let mut acc = G::identity();
-    for (s, p) in scalars.iter().zip(bases.iter()) {
-        acc += *p * s;
-    }
-    acc
-}
-
 impl<G: PrimeGroup> LinearMap<G> {
     /// Creates a new empty [`LinearMap`].
     ///
@@ -310,7 +324,7 @@ impl<G: PrimeGroup> LinearMap<G> {
                     lc.0.iter()
                         .map(|weighted| self.group_elements.get(weighted.term.elem))
                         .collect::<Result<Vec<_>, _>>()?;
-                Ok(msm_pr(&weighted_coefficients, &elements))
+                Ok(G::msm(&weighted_coefficients, &elements))
             })
             .collect()
     }
@@ -397,6 +411,13 @@ impl<G: PrimeGroup> LinearRelation<G> {
         GroupVar(self.linear_map.num_elements - 1, PhantomData)
     }
 
+    /// Allocates a point variable (group element) and sets it immediately to the given value
+    pub fn allocate_element_with(&mut self, element: G) -> GroupVar<G> {
+        let var = self.allocate_element();
+        self.set_element(var, element);
+        var
+    }
+
     /// Allocates `N` point variables (group elements) for use in the linear map.
     ///
     /// # Returns
@@ -417,6 +438,14 @@ impl<G: PrimeGroup> LinearRelation<G> {
             *var = self.allocate_element();
         }
         vars
+    }
+
+    /// Allocates a point variable (group element) and sets it immediately to the given value.
+    pub fn allocate_elements_with(&mut self, elements: &[G]) -> Vec<GroupVar<G>> {
+        elements
+            .iter()
+            .map(|element| self.allocate_element_with(*element))
+            .collect()
     }
 
     /// Assign a group element value to a point variable.
@@ -466,23 +495,12 @@ impl<G: PrimeGroup> LinearRelation<G> {
             panic!("invalid LinearRelation: different number of constraints and image variables");
         }
 
-        for (lc, lhs) in iter::zip(
-            self.linear_map.linear_combinations.as_slice(),
-            self.image.as_slice(),
-        ) {
-            // TODO: The multiplication by the (public) weight is potentially wasteful in the
-            // weight is most commonly 1, but multiplication is constant time.
-            let weighted_coefficients =
-                lc.0.iter()
-                    .map(|weighted| weighted.term.scalar.value(scalars) * weighted.weight)
-                    .collect::<Vec<_>>();
-            let elements =
-                lc.0.iter()
-                    .map(|weighted| self.linear_map.group_elements.get(weighted.term.elem))
-                    .collect::<Result<Vec<_>, _>>()?;
+        let mapped_scalars = self.linear_map.map(scalars)?;
+
+        for (mapped_scalar, lhs) in iter::zip(mapped_scalars, &self.image) {
             self.linear_map
                 .group_elements
-                .assign_element(*lhs, msm_pr(&weighted_coefficients, &elements))
+                .assign_element(*lhs, mapped_scalar)
         }
         Ok(())
     }
@@ -534,7 +552,14 @@ impl<G: PrimeGroup> LinearRelation<G> {
     pub fn into_nizk(
         self,
         session_identifier: &[u8],
-    ) -> Result<Nizk<SchnorrProof<G>, Shake128DuplexSponge<G>>, InvalidInstance> {
+    ) -> Result<Nizk<CanonicalLinearRelation<G>, Shake128DuplexSponge<G>>, InvalidInstance> {
         Ok(Nizk::new(session_identifier, self.try_into()?))
+    }
+
+    /// Construct a [CanonicalLinearRelation] from this generalized linear relation.
+    ///
+    /// The construction may fail if the linear relation is malformed, unsatisfiable, or trivial.
+    pub fn canonical(&self) -> Result<CanonicalLinearRelation<G>, InvalidInstance> {
+        self.try_into()
     }
 }

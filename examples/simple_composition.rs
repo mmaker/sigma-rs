@@ -40,9 +40,7 @@ fn create_relation(P1: G, P2: G, Q: G, H: G) -> ComposedRelation<G> {
     rel2.set_element(Q_var, Q);
 
     // Compose into OR protocol
-    let proto1 = ComposedRelation::from(rel1);
-    let proto2 = ComposedRelation::from(rel2);
-    ComposedRelation::Or(vec![proto1, proto2])
+    ComposedRelation::or([rel1.canonical().unwrap(), rel2.canonical().unwrap()])
 }
 
 /// Prove knowledge of one of the witnesses (we know x2 for the DLEQ)
@@ -53,7 +51,11 @@ fn prove(P1: G, x2: Scalar, H: G) -> ProofResult<Vec<u8>> {
     let Q = H * x2;
 
     let instance = create_relation(P1, P2, Q, H);
-    let witness = ComposedWitness::Or(1, vec![ComposedWitness::Simple(vec![x2])]);
+    // Create OR witness with branch 1 being the real one (index 1)
+    let witness = ComposedWitness::Or(vec![
+        ComposedWitness::Simple(vec![Scalar::from(0u64)]),
+        ComposedWitness::Simple(vec![x2]),
+    ]);
     let nizk = Nizk::<_, Shake128DuplexSponge<G>>::new(b"or_proof_example", instance);
 
     nizk.prove_batchable(&witness, &mut OsRng)

@@ -5,8 +5,10 @@
 
 #[cfg(test)]
 mod instance_validation {
-    use crate::linear_relation::{CanonicalLinearRelation, LinearRelation, Sum, Term, Weighted};
+    use crate::linear_relation::{CanonicalLinearRelation, LinearRelation};
     use bls12_381::{G1Projective as G, Scalar};
+    use ff::Field;
+    use group::Group;
 
     #[test]
     fn test_unassigned_group_vars() {
@@ -15,11 +17,11 @@ mod instance_validation {
 
         // Allocate scalars and elements
         let [var_x] = relation.allocate_scalars();
-        let [var_g, var_x_g] = relation.allocate_elements::<2>();
+        let [var_g, var_x_g] = relation.allocate_elements();
 
         // Set only one element, leaving var_g unassigned
         let x_val = G::generator() * Scalar::from(42u64);
-        relation.set_elements([(var_x_g, x_val)]);
+        relation.set_element(var_x_g, x_val);
 
         // Add equation: X = x * G (but G is not set)
         relation.append_equation(var_x_g, var_x * var_g);
@@ -30,53 +32,58 @@ mod instance_validation {
     }
 
     #[test]
-    fn test_zero_image_elements() {
+    fn test_zero_image() {
         // Create a linear relation with zero elements in the image
+        // 0 = x * G (which is invalid)
         let mut relation = LinearRelation::<G>::new();
-
-        // Allocate scalars and elements
         let [var_x] = relation.allocate_scalars();
-        let [var_g] = relation.allocate_elements::<1>();
-
-        // Set the group element
-        relation.set_elements([(var_g, G::generator())]);
-
-        // Create an equation that results in zero (identity element)
-        // This simulates a malformed relation where the image contains zero
-        let zero_element = G::identity();
-        let [var_zero] = relation.allocate_elements::<1>();
-        relation.set_elements([(var_zero, zero_element)]);
-
-        // Add equation: 0 = x * G (which is invalid)
-        relation.linear_map.linear_combinations.push(
-            crate::linear_relation::LinearCombination::from(vec![(var_x, var_g)]),
-        );
-        relation.image.push(var_zero);
-
-        // Try to convert to canonical form
+        let [var_G] = relation.allocate_elements();
+        let var_X = relation.allocate_eq(var_G * var_x);
+        relation.set_element(var_G, G::generator());
+        relation.set_element(var_X, G::identity());
         let result = CanonicalLinearRelation::try_from(&relation);
-        assert!(result.is_err())
+        assert!(result.is_err());
+
+        // Create a trivially valid linear relation with zero elements in the image
+        // 0 = 0*B
+        let mut relation = LinearRelation::<G>::new();
+        let [var_B] = relation.allocate_elements();
+        let var_X = relation.allocate_eq(var_B * Scalar::from(0));
+        relation.set_element(var_B, G::generator());
+        relation.set_element(var_X, G::identity());
+        let result = CanonicalLinearRelation::try_from(&relation);
+        assert!(result.is_ok());
+
+        // Create a valid linear relation with zero elements in the image
+        // 0 = 0*x*C
+        let mut relation = LinearRelation::<G>::new();
+        let [var_x] = relation.allocate_scalars();
+        let [var_C] = relation.allocate_elements();
+        let var_X = relation.allocate_eq(var_C * var_x * Scalar::from(0));
+        relation.set_element(var_C, G::generator());
+        relation.set_element(var_X, G::identity());
+        let result = CanonicalLinearRelation::try_from(&relation);
+        assert!(result.is_ok());
     }
 
     #[test]
     #[allow(non_snake_case)]
     pub fn test_degenerate_equation() {
-        use ff::Field;
-
         // This relation should fail for two reasons:
-        // 1. because B is not assigned
+        // 1. because var_B is not assigned
         let mut relation = LinearRelation::<G>::new();
         let x = relation.allocate_scalar();
-        let B = relation.allocate_element();
-        let _eq = relation.allocate_eq((x + (-Scalar::ONE)) * B + (-B));
+        let var_B = relation.allocate_element();
+        let var_X = relation.allocate_eq((x + (-Scalar::ONE)) * var_B + (-var_B));
+        relation.set_element(var_X, G::identity());
         assert!(CanonicalLinearRelation::try_from(&relation).is_err());
 
-        // 2. because the equation is void
+        // 2. because var_X is not assigned
         let mut relation = LinearRelation::<G>::new();
         let x = relation.allocate_scalar();
-        let B = relation.allocate_element();
-        let _eq = relation.allocate_eq((x + (-Scalar::ONE)) * B + (-B));
-        relation.set_element(B, G::generator());
+        let var_B = relation.allocate_element();
+        let _var_X = relation.allocate_eq((x + (-Scalar::ONE)) * var_B + (-var_B));
+        relation.set_element(var_B, G::generator());
         assert!(CanonicalLinearRelation::try_from(&relation).is_err());
     }
 
@@ -85,7 +92,7 @@ mod instance_validation {
         // Create a relation with mismatched equations and image elements
         let mut relation = LinearRelation::<G>::new();
         let [var_x] = relation.allocate_scalars();
-        let [var_g, var_h] = relation.allocate_elements::<2>();
+        let [var_g, var_h] = relation.allocate_elements();
         relation.set_elements([
             (var_g, G::generator()),
             (var_h, G::generator() * Scalar::from(2u64)),
@@ -97,10 +104,7 @@ mod instance_validation {
         relation.set_element(var_g, G::generator());
         relation.set_element(var_h, G::generator() * Scalar::from(2));
         relation.set_element(var_img_1, G::generator() * Scalar::from(3));
-
-        // Try to convert - should fail due to inconsistency
-        let result = CanonicalLinearRelation::try_from(&relation);
-        assert!(result.is_err());
+        assert!(relation.canonical().is_err());
     }
 
     #[test]
@@ -110,6 +114,12 @@ mod instance_validation {
         let nizk = relation.into_nizk(b"test_session").unwrap();
         let narg_string = nizk.prove_batchable(&vec![], rng).unwrap();
         assert!(narg_string.is_empty());
+
+        let mut relation = LinearRelation::<G>::new();
+        let var_B = relation.allocate_element();
+        let var_C = relation.allocate_eq(var_B * Scalar::from(1));
+        relation.set_elements([(var_B, G::generator()), (var_C, G::generator())]);
+        assert!(CanonicalLinearRelation::try_from(&relation).is_ok());
     }
 
     #[test]
@@ -121,69 +131,79 @@ mod instance_validation {
 
         let X = G::generator() * Scalar::from(4);
 
-        // The following relation is invalid and should trigger a fail.
+        // The following relation is trivially invalid.
+        // That is, we know that no witness will ever satisfy it.
+        // In this case, we're letting the prover fail and build the relation anyways.
         let mut linear_relation = LinearRelation::<G>::new();
         let B_var = linear_relation.allocate_element();
         let C_var = linear_relation.allocate_eq(B_var);
-        linear_relation.set_element(B_var, B);
-        linear_relation.set_element(C_var, C);
-        let result = CanonicalLinearRelation::try_from(&linear_relation);
-        assert!(result.is_err());
+        linear_relation.set_elements([(B_var, B), (C_var, C)]);
+        assert!(linear_relation.canonical().is_ok());
+
+        // Also in this case, we know that no witness will ever satisfy the relation.
+        // Also here, the relation is built even though the prover will never be able to give a valid proof for it.
+        // X != B * pub_scalar + A * 3
+        let mut linear_relation = LinearRelation::<G>::new();
+        let [B_var, A_var] = linear_relation.allocate_elements();
+        let X_var = linear_relation.allocate_eq(B_var * pub_scalar + A_var * Scalar::from(3));
+        linear_relation.set_elements([(B_var, B), (A_var, A), (X_var, X)]);
+        assert!(linear_relation.canonical().is_ok());
 
         // The following relation is valid and should pass.
         let mut linear_relation = LinearRelation::<G>::new();
         let B_var = linear_relation.allocate_element();
         let C_var = linear_relation.allocate_eq(B_var);
-        linear_relation.set_element(B_var, B);
-        linear_relation.set_element(C_var, B);
-        let result = CanonicalLinearRelation::try_from(&linear_relation);
-        assert!(result.is_ok());
-
-        // The following relation is invalid and should trigger a fail.
-        // X != B * pub_scalar + A * 3
-        let mut linear_relation = LinearRelation::<G>::new();
-        let B_var = linear_relation.allocate_element();
-        let A_var = linear_relation.allocate_element();
-        let X_var = linear_relation.allocate_eq(B_var * pub_scalar + A_var * Scalar::from(3));
-
-        linear_relation.set_element(B_var, B);
-        linear_relation.set_element(A_var, A);
-        linear_relation.set_element(X_var, X);
-
-        let result = CanonicalLinearRelation::try_from(&linear_relation);
-        assert!(result.is_err());
+        linear_relation.set_elements([(B_var, B), (C_var, B)]);
+        assert!(linear_relation.canonical().is_ok());
 
         // The following relation is valid and should pass.
         // C = B * pub_scalar + A * 3
         let mut linear_relation = LinearRelation::<G>::new();
-        let B_var = linear_relation.allocate_element();
-        let A_var = linear_relation.allocate_element();
+        let [B_var, A_var] = linear_relation.allocate_elements();
         let C_var = linear_relation.allocate_eq(B_var * pub_scalar + A_var * Scalar::from(3));
-
-        linear_relation.set_element(B_var, B);
-        linear_relation.set_element(A_var, A);
-        linear_relation.set_element(C_var, C);
-
-        let result = CanonicalLinearRelation::try_from(&linear_relation);
-        assert!(result.is_ok());
+        linear_relation.set_elements([(B_var, B), (A_var, A), (C_var, C)]);
+        assert!(linear_relation.canonical().is_ok());
 
         // The following relation is for
         // X = B * x + B * pub_scalar + A * 3
         // and should be considered a valid instance.
         let mut linear_relation = LinearRelation::<G>::new();
-
         let x_var = linear_relation.allocate_scalar();
-        let B_var = linear_relation.allocate_element();
-        let A_var = linear_relation.allocate_element();
+        let [B_var, A_var] = linear_relation.allocate_elements();
         let X_var = linear_relation
             .allocate_eq(B_var * x_var + B_var * pub_scalar + A_var * Scalar::from(3));
+        linear_relation.set_elements([(B_var, B), (A_var, A), (X_var, X)]);
+        assert!(linear_relation.canonical().is_ok());
+    }
 
-        linear_relation.set_element(B_var, B);
-        linear_relation.set_element(A_var, A);
-        linear_relation.set_element(X_var, X);
+    #[test]
+    fn test_statement_with_trivial_image() {
+        let mut rng = rand::thread_rng();
+        let mut linear_relation = LinearRelation::new();
 
-        let result = CanonicalLinearRelation::try_from(&linear_relation);
-        assert!(result.is_ok());
+        let [x_var, y_var] = linear_relation.allocate_scalars();
+        let [Z_var, A_var, B_var, C_var] = linear_relation.allocate_elements();
+        linear_relation.append_equation(Z_var, x_var * A_var + y_var * B_var + C_var);
+
+        let [x, y] = [Scalar::random(&mut rng), Scalar::random(&mut rng)];
+        let Z = G::identity();
+        let A = G::random(&mut rng);
+        let B = G::generator();
+        let C = -x * A - y * B;
+
+        // The equation 0 = x*A + y*B + C
+        // Has a non-trivial solution.
+        linear_relation.set_elements([(Z_var, Z), (A_var, A), (B_var, B), (C_var, C)]);
+        assert!(linear_relation.canonical().is_ok());
+
+        // Adding more non-trivial statements does not affect the validity of the relation.
+        let F_var = linear_relation.allocate_element();
+        let f_var = linear_relation.allocate_scalar();
+        linear_relation.append_equation(F_var, f_var * A_var);
+        let f = Scalar::random(&mut rng);
+        let F = A * f;
+        linear_relation.set_elements([(F_var, F), (A_var, A)]);
+        assert!(linear_relation.canonical().is_ok());
     }
 }
 
@@ -193,16 +213,15 @@ mod proof_validation {
     use crate::composition::{ComposedRelation, ComposedWitness};
     use crate::fiat_shamir::Nizk;
     use crate::linear_relation::{CanonicalLinearRelation, LinearRelation};
-    use crate::schnorr_protocol::SchnorrProof;
     use bls12_381::{G1Projective as G, Scalar};
     use ff::Field;
-    use rand::{thread_rng, RngCore};
+    use rand::RngCore;
 
-    type TestNizk = Nizk<SchnorrProof<G>, KeccakByteSchnorrCodec<G>>;
+    type TestNizk = Nizk<CanonicalLinearRelation<G>, KeccakByteSchnorrCodec<G>>;
 
     /// Helper function to create a simple discrete log proof
     fn create_valid_proof() -> (Vec<u8>, TestNizk) {
-        let mut rng = thread_rng();
+        let mut rng = rand::thread_rng();
 
         // Create a simple discrete log relation
         let mut relation = LinearRelation::<G>::new();
@@ -215,9 +234,7 @@ mod proof_validation {
         relation.set_elements([(var_g, G::generator()), (var_x_g, x_g)]);
         relation.append_equation(var_x_g, var_x * var_g);
 
-        let canonical = CanonicalLinearRelation::try_from(&relation).unwrap();
-        let protocol = SchnorrProof(canonical);
-        let nizk = TestNizk::new(b"test_session", protocol);
+        let nizk = TestNizk::new(b"test_session", relation.canonical().unwrap());
 
         let witness = vec![x];
         let proof = nizk.prove_batchable(&witness, &mut rng).unwrap();
@@ -233,21 +250,17 @@ mod proof_validation {
         assert!(nizk.verify_batchable(&proof).is_ok());
 
         // Test bitflips at various positions
-        let positions = [0, proof.len() / 2, proof.len() - 1];
-
-        for &pos in &positions {
+        for pos in 0..proof.len() {
             let original_byte = proof[pos];
 
             // Flip each bit in the byte
             for bit in 0..8 {
-                proof[pos] = original_byte ^ (1 << bit);
+                proof[pos] ^= 1 << bit;
 
                 // Verification should fail
                 assert!(
                     nizk.verify_batchable(&proof).is_err(),
-                    "Proof verification should fail with bit {} flipped at position {}",
-                    bit,
-                    pos
+                    "Proof verification should fail with bit {bit} flipped at position {pos}"
                 );
 
                 // Restore original byte
@@ -270,7 +283,7 @@ mod proof_validation {
             let original_len = proof.len();
 
             // Append random bytes
-            let mut rng = thread_rng();
+            let mut rng = rand::thread_rng();
             let mut extra_bytes = vec![0u8; size];
             rng.fill_bytes(&mut extra_bytes);
             proof.extend_from_slice(&extra_bytes);
@@ -278,8 +291,7 @@ mod proof_validation {
             // Verification should fail
             assert!(
                 nizk.verify_batchable(&proof).is_err(),
-                "Proof verification should fail with {} bytes appended",
-                size
+                "Proof verification should fail with {size} bytes appended"
             );
 
             // Restore original proof
@@ -299,7 +311,7 @@ mod proof_validation {
 
         for &size in &prepend_sizes {
             // Create new proof with prepended bytes
-            let mut rng = thread_rng();
+            let mut rng = rand::thread_rng();
             let mut prepended_proof = vec![0u8; size];
             rng.fill_bytes(&mut prepended_proof);
             prepended_proof.extend_from_slice(&proof);
@@ -307,8 +319,7 @@ mod proof_validation {
             // Verification should fail
             assert!(
                 nizk.verify_batchable(&prepended_proof).is_err(),
-                "Proof verification should fail with {} bytes prepended",
-                size
+                "Proof verification should fail with {size} bytes prepended"
             );
         }
     }
@@ -330,8 +341,7 @@ mod proof_validation {
                 // Verification should fail
                 assert!(
                     nizk.verify_batchable(truncated_proof).is_err(),
-                    "Proof verification should fail with {} bytes truncated",
-                    size
+                    "Proof verification should fail with {size} bytes truncated"
                 );
             }
         }
@@ -355,7 +365,7 @@ mod proof_validation {
         let proof_len = valid_proof.len();
 
         // Test with completely random bytes of the same length
-        let mut rng = thread_rng();
+        let mut rng = rand::thread_rng();
         let mut random_proof = vec![0u8; proof_len];
         rng.fill_bytes(&mut random_proof);
 
@@ -370,7 +380,7 @@ mod proof_validation {
     fn test_or_relation() {
         // This test reproduces the issue from sigma_compiler's simple_or test
         // where an OR relation fails verification when using the wrong branch
-        let mut rng = thread_rng();
+        let mut rng = rand::thread_rng();
 
         // Create generators
         // For this test, we'll use two different multiples of the generator
@@ -385,15 +395,14 @@ mod proof_validation {
         let C = B * y;
 
         // Create the first branch: C = x*A
-        let mut lr1 = LinearRelation::<G>::new();
+        let mut lr1 = LinearRelation::new();
         let x_var = lr1.allocate_scalar();
         let A_var = lr1.allocate_element();
         let eq1 = lr1.allocate_eq(x_var * A_var);
         lr1.set_element(A_var, A);
         lr1.set_element(eq1, C);
-
         // Create the second branch: C = y*B
-        let mut lr2 = LinearRelation::<G>::new();
+        let mut lr2 = LinearRelation::new();
         let y_var = lr2.allocate_scalar();
         let B_var = lr2.allocate_element();
         let eq2 = lr2.allocate_eq(y_var * B_var);
@@ -401,40 +410,45 @@ mod proof_validation {
         lr2.set_element(eq2, C);
 
         // Create OR composition
-        let or_relation = ComposedRelation::Or(vec![
-            ComposedRelation::from(lr1),
-            ComposedRelation::from(lr2),
-        ]);
+        let or_relation =
+            ComposedRelation::or([lr1.canonical().unwrap(), lr2.canonical().unwrap()]);
+        let nizk = or_relation.into_nizk(b"test_or_relation");
 
-        // The issue from sigma_compiler: the witness is always using branch 0
-        // even when branch 1 should be used
-        let witness_wrong = ComposedWitness::Or(
-            1, // Always using branch 0
-            vec![
-                ComposedWitness::Simple(vec![x]),
-                ComposedWitness::Simple(vec![y]),
-            ],
+        // Create a correct witness for branch 1 (C = y*B)
+        // Note: x is NOT a valid witness for branch 0 because C ≠ x*A
+        let witness_correct = ComposedWitness::Or(vec![
+            ComposedWitness::Simple(vec![x]),
+            ComposedWitness::Simple(vec![y]),
+        ]);
+        let proof = nizk.prove_batchable(&witness_correct, &mut rng).unwrap();
+        assert!(
+            nizk.verify_batchable(&proof).is_ok(),
+            "Valid proof should verify"
         );
 
-        // Test the bug: using branch 0 when C = y*B (branch 1 should be used)
-        let nizk = Nizk::<_, KeccakByteSchnorrCodec<G>>::new(b"test_or_bug", or_relation);
+        // Now test with ONLY invalid witnesses (neither branch satisfied)
+        // Branch 0 requires C = x*A, but we use random x
+        // Branch 1 requires C = y*B, but we use a different random value
+        let wrong_y = Scalar::random(&mut rng);
+        let witness_wrong = ComposedWitness::Or(vec![
+            ComposedWitness::Simple(vec![x]),
+            ComposedWitness::Simple(vec![wrong_y]),
+        ]);
         let proof_result = nizk.prove_batchable(&witness_wrong, &mut rng);
+        assert!(
+            proof_result.is_err(),
+            "Proof should fail with invalid witnesses"
+        );
 
-        match proof_result {
-            Ok(proof) => {
-                let verify_result = nizk.verify_batchable(&proof);
-                println!(
-                    "Bug reproduced: Proof with wrong branch verified: {:?}",
-                    verify_result.is_ok()
-                );
-                assert!(
-                    verify_result.is_err(),
-                    "BUG: Proof should fail when using wrong branch in OR relation, but it passed!"
-                );
-            }
-            Err(e) => {
-                println!("Proof generation failed as expected: {:?}", e);
-            }
-        }
+        // Create a correct witness for both branches
+        let witness_correct = ComposedWitness::Or(vec![
+            ComposedWitness::Simple(vec![y]),
+            ComposedWitness::Simple(vec![y]),
+        ]);
+        let proof = nizk.prove_batchable(&witness_correct, &mut rng).unwrap();
+        assert!(
+            nizk.verify_batchable(&proof).is_ok(),
+            "Prover fails when all witnesses in an OR proof are valid"
+        );
     }
 }
